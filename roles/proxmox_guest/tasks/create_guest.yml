@@ -3,8 +3,7 @@
   community.proxmox.proxmox_kvm:
     api_host: "{{ proxmox_api_host }}"
     api_user: "{{ proxmox_api_user }}"
-    api_token_id: "{{ proxmox_api_token_id }}"
-    api_token_secret: "{{ proxmox_api_token_secret }}"
+    api_password: "{{ proxmox_root_password }}"
     node: "{{ proxmox_node }}"
     clone: "{{ template_name }}"
     newid: "{{ vm.vmid }}"
@@ -12,14 +11,12 @@
     full: true
     storage: local-lvm
     timeout: 300
-  register: clone_result
 
 - name: "Configure {{ vm.name }} resources"
   community.proxmox.proxmox_kvm:
     api_host: "{{ proxmox_api_host }}"
     api_user: "{{ proxmox_api_user }}"
-    api_token_id: "{{ proxmox_api_token_id }}"
-    api_token_secret: "{{ proxmox_api_token_secret }}"
+    api_password: "{{ proxmox_root_password }}"
     node: "{{ proxmox_node }}"
     vmid: "{{ vm.vmid }}"
     cores: "{{ vm.cores }}"
@@ -30,8 +27,7 @@
   community.proxmox.proxmox_kvm:
     api_host: "{{ proxmox_api_host }}"
     api_user: "{{ proxmox_api_user }}"
-    api_token_id: "{{ proxmox_api_token_id }}"
-    api_token_secret: "{{ proxmox_api_token_secret }}"
+    api_password: "{{ proxmox_root_password }}"
     node: "{{ proxmox_node }}"
     vmid: "{{ vm.vmid }}"
     ciuser: "{{ guest_default_user }}"
@@ -40,14 +36,13 @@
     ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
     nameserver: "{{ libvirt_net_gateway }}"
     update: true
-  when: guest_ssh_public_key | length > 0
+  when: guest_ssh_public_key | default('', true) | length > 0
 
 - name: "Configure {{ vm.name }} cloud-init (no SSH key)"
   community.proxmox.proxmox_kvm:
     api_host: "{{ proxmox_api_host }}"
     api_user: "{{ proxmox_api_user }}"
-    api_token_id: "{{ proxmox_api_token_id }}"
-    api_token_secret: "{{ proxmox_api_token_secret }}"
+    api_password: "{{ proxmox_root_password }}"
     node: "{{ proxmox_node }}"
     vmid: "{{ vm.vmid }}"
     ciuser: "{{ guest_default_user }}"
@@ -55,14 +50,13 @@
     ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
     nameserver: "{{ libvirt_net_gateway }}"
     update: true
-  when: guest_ssh_public_key | length == 0
+  when: guest_ssh_public_key | default('', true) | length == 0
 
 - name: "Resize {{ vm.name }} disk"
   community.proxmox.proxmox_disk:
     api_host: "{{ proxmox_api_host }}"
     api_user: "{{ proxmox_api_user }}"
-    api_token_id: "{{ proxmox_api_token_id }}"
-    api_token_secret: "{{ proxmox_api_token_secret }}"
+    api_password: "{{ proxmox_root_password }}"
     vmid: "{{ vm.vmid }}"
     disk: scsi0
     size: "{{ vm.disk_size }}"
@@ -73,8 +67,7 @@
   community.proxmox.proxmox_kvm:
     api_host: "{{ proxmox_api_host }}"
     api_user: "{{ proxmox_api_user }}"
-    api_token_id: "{{ proxmox_api_token_id }}"
-    api_token_secret: "{{ proxmox_api_token_secret }}"
+    api_password: "{{ proxmox_root_password }}"
     node: "{{ proxmox_node }}"
     vmid: "{{ vm.vmid }}"
     state: started

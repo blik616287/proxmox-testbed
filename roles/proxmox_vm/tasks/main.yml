@@ -6,8 +6,6 @@
     mode: "0755"
   loop:
     - "{{ iso_cache_dir }}"
-    - /tmp/pve-remaster
-    - /tmp/pve-iso-mount
     - /var/log/proxmox-testbed
 
 - name: Download Proxmox VE ISO
@@ -27,6 +25,15 @@
 - name: Remaster Proxmox ISO with auto-installer
   when: not auto_iso_stat.stat.exists
   block:
+    - name: Create temp directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /tmp/pve-remaster
+        - /tmp/pve-iso-mount
+
     - name: Mount original ISO
       ansible.posix.mount:
         path: /tmp/pve-iso-mount
@@ -53,37 +60,29 @@
         dest: /tmp/pve-remaster/answer.toml
         mode: "0644"
 
-    - name: Create auto-installer-mode.toml (flat keys, not sections)
+    - name: Create auto-installer-mode.toml
       ansible.builtin.copy:
         content: "mode = \"iso\"\n"
         dest: /tmp/pve-remaster/auto-installer-mode.toml
         mode: "0644"
 
-    - name: Verify auto-installer-mode.toml content
-      ansible.builtin.command: cat /tmp/pve-remaster/auto-installer-mode.toml
-      register: mode_toml_check
-      changed_when: false
+    - name: Patch grub.cfg for auto-boot with serial console
+      ansible.builtin.shell: |
+        set -e
+        cd /tmp/pve-remaster/boot/grub
+        sed -i 's/set timeout=10/set timeout=0/' grub.cfg
+        sed -i 's|splash=silent proxmox-start-auto-installer|splash=verbose proxmox-start-auto-installer console=ttyS0,115200|' grub.cfg
+        grep -A3 "Install Proxmox VE (Automated)" grub.cfg | head -5
+      args:
+        executable: /bin/bash
+      register: grub_patch
+      changed_when: true
 
-    - name: Show auto-installer-mode.toml
+    - name: Show patched grub entry
       ansible.builtin.debug:
-        var: mode_toml_check.stdout
+        var: grub_patch.stdout
 
-    - name: Verify answer.toml content
-      ansible.builtin.command: cat /tmp/pve-remaster/answer.toml
-      register: answer_toml_check
-      changed_when: false
-
-    - name: Show answer.toml
-      ansible.builtin.debug:
-        var: answer_toml_check.stdout
-
-    - name: Patch grub.cfg — set auto-installer as default with zero timeout
-      ansible.builtin.replace:
-        path: /tmp/pve-remaster/boot/grub/grub.cfg
-        regexp: 'set timeout-style=menu\n\s+set timeout=10'
-        replace: "set timeout-style=menu\n    set timeout=0\n    set default=0"
-
-    - name: Extract MBR from original ISO for hybrid boot
+    - name: Extract MBR from original ISO
       ansible.builtin.shell: |
         dd if={{ iso_cache_dir }}/{{ proxmox_iso_filename }} bs=512 count=1 of=/tmp/pve-remaster-mbr.bin 2>/dev/null
       args:
@@ -108,27 +107,6 @@
       args:
         executable: /bin/bash
 
-    - name: Verify remastered ISO has correct files
-      ansible.builtin.shell: |
-        set -e
-        mkdir -p /tmp/pve-verify
-        mount -o loop,ro {{ iso_cache_dir }}/proxmox-ve-auto.iso /tmp/pve-verify
-        echo "=== auto-installer-mode.toml ==="
-        cat /tmp/pve-verify/auto-installer-mode.toml
-        echo "=== answer.toml ==="
-        cat /tmp/pve-verify/answer.toml
-        echo "=== grub auto-installer section ==="
-        grep -A5 "auto-installer-mode.toml" /tmp/pve-verify/boot/grub/grub.cfg | head -10
-        umount /tmp/pve-verify
-      args:
-        executable: /bin/bash
-      register: iso_verify
-      changed_when: false
-
-    - name: Show ISO verification
-      ansible.builtin.debug:
-        var: iso_verify.stdout
-
     - name: Clean up remaster working files
       ansible.builtin.file:
         path: "{{ item }}"
@@ -137,9 +115,8 @@
         - /tmp/pve-remaster
         - /tmp/pve-remaster-mbr.bin
         - /tmp/pve-iso-mount
-        - /tmp/pve-verify
 
-# --- Create and boot VM with serial console logging ---
+# --- Install Proxmox VM ---
 
 - name: Check if Proxmox VM already exists
   ansible.builtin.command: virsh dominfo {{ proxmox_vm_name }}
@@ -147,90 +124,97 @@
   changed_when: false
   failed_when: false
 
-- name: Create Proxmox VM disk
-  ansible.builtin.command: >
-    qemu-img create -f qcow2
-    {{ proxmox_vm_disk_path }}
-    {{ proxmox_vm_disk_size }}
-  args:
-    creates: "{{ proxmox_vm_disk_path }}"
+- name: Install Proxmox VM
   when: vm_check.rc != 0
+  block:
+    - name: Create Proxmox VM disk
+      ansible.builtin.command: >
+        qemu-img create -f qcow2
+        {{ proxmox_vm_disk_path }}
+        {{ proxmox_vm_disk_size }}
+      args:
+        creates: "{{ proxmox_vm_disk_path }}"
 
-- name: Create and start Proxmox VM with serial console logging
-  ansible.builtin.shell: |
-    virt-install \
-      --name {{ proxmox_vm_name }} \
-      --ram {{ proxmox_vm_ram_mb }} \
-      --vcpus {{ proxmox_vm_vcpus }} \
-      --cpu host-passthrough \
-      --disk path={{ proxmox_vm_disk_path }},bus=virtio,format=qcow2 \
-      --cdrom {{ iso_cache_dir }}/proxmox-ve-auto.iso \
-      --network network={{ libvirt_net_name }},mac={{ proxmox_vm_mac }},model=virtio \
-      --os-variant debian12 \
-      --graphics vnc,listen=127.0.0.1 \
-      --serial file,path=/var/log/proxmox-testbed/console.log \
-      --console pty,target.type=serial \
-      --boot cdrom,hd \
-      --noautoconsole
-  args:
-    executable: /bin/bash
-  when: vm_check.rc != 0
+    - name: Create and boot Proxmox VM from installer ISO
+      ansible.builtin.shell: |
+        truncate -s 0 /var/log/proxmox-testbed/console.log 2>/dev/null || true
+        virt-install \
+          --name {{ proxmox_vm_name }} \
+          --ram {{ proxmox_vm_ram_mb }} \
+          --vcpus {{ proxmox_vm_vcpus }} \
+          --cpu host-passthrough \
+          --disk path={{ proxmox_vm_disk_path }},bus=virtio,format=qcow2 \
+          --cdrom {{ iso_cache_dir }}/proxmox-ve-auto.iso \
+          --network network={{ libvirt_net_name }},mac={{ proxmox_vm_mac }},model=virtio \
+          --os-variant debian12 \
+          --graphics vnc,listen=127.0.0.1 \
+          --serial file,path=/var/log/proxmox-testbed/console.log \
+          --console pty,target.type=serial \
+          --boot cdrom,hd \
+          --noautoconsole
+      args:
+        executable: /bin/bash
 
-- name: Tail serial console log during install (async monitoring)
-  ansible.builtin.shell: |
-    set -e
-    echo "=== Monitoring serial console output ==="
-    for i in $(seq 1 120); do
-      state=$(virsh domstate {{ proxmox_vm_name }} 2>/dev/null || echo "unknown")
-      if [ "$state" = "shut off" ]; then
-        echo "=== VM shut off — installation complete ==="
-        echo "=== Final serial log ==="
+    - name: Wait for installation to complete (monitor serial log)
+      ansible.builtin.shell: |
+        set -e
+        for i in $(seq 1 120); do
+          state=$(virsh domstate {{ proxmox_vm_name }} 2>/dev/null || echo "gone")
+          if [ "$state" = "shut off" ] || [ "$state" = "gone" ]; then
+            echo "Installation finished"
+            # Check serial log for success
+            if grep -q "Rebooting system after successful installation" /var/log/proxmox-testbed/console.log 2>/dev/null; then
+              echo "SUCCESS: Auto-installer completed successfully"
+              exit 0
+            elif grep -q "make system bootable" /var/log/proxmox-testbed/console.log 2>/dev/null; then
+              echo "SUCCESS: System made bootable"
+              exit 0
+            else
+              echo "SERIAL LOG:"
+              cat /var/log/proxmox-testbed/console.log
+              echo "POSSIBLE FAILURE: Check serial log above"
+              exit 1
+            fi
+          fi
+          sleep 30
+        done
+        echo "TIMEOUT"
         cat /var/log/proxmox-testbed/console.log
-        exit 0
-      fi
-      # Print any new serial output
-      if [ -f /var/log/proxmox-testbed/console.log ]; then
-        wc -c /var/log/proxmox-testbed/console.log
-      fi
-      sleep 30
-    done
-    echo "=== TIMEOUT — dumping full serial log ==="
-    cat /var/log/proxmox-testbed/console.log
-    exit 1
-  args:
-    executable: /bin/bash
-  register: install_monitor
-  changed_when: false
-  when: vm_check.rc != 0
-  timeout: 3600
+        exit 1
+      args:
+        executable: /bin/bash
+      register: install_result
+      changed_when: false
+      timeout: 3600
 
-- name: Show install monitor output
-  ansible.builtin.debug:
-    var: install_monitor.stdout_lines
-  when: vm_check.rc != 0
+    - name: Show installation result
+      ansible.builtin.debug:
+        var: install_result.stdout_lines
 
-- name: Dump full serial log on failure
-  ansible.builtin.shell: cat /var/log/proxmox-testbed/console.log 2>/dev/null || echo "no log found"
-  args:
-    executable: /bin/bash
-  register: serial_log
-  changed_when: false
-  when: install_monitor is defined and install_monitor.rc is defined and install_monitor.rc != 0
+    - name: Re-define and boot VM from disk (post-install)
+      ansible.builtin.shell: |
+        set -e
+        # The VM may have been auto-undefined after install
+        virsh undefine {{ proxmox_vm_name }} 2>/dev/null || true
+        truncate -s 0 /var/log/proxmox-testbed/console.log 2>/dev/null || true
+        virt-install \
+          --name {{ proxmox_vm_name }} \
+          --ram {{ proxmox_vm_ram_mb }} \
+          --vcpus {{ proxmox_vm_vcpus }} \
+          --cpu host-passthrough \
+          --disk path={{ proxmox_vm_disk_path }},bus=virtio,format=qcow2 \
+          --network network={{ libvirt_net_name }},mac={{ proxmox_vm_mac }},model=virtio \
+          --os-variant debian12 \
+          --graphics vnc,listen=127.0.0.1 \
+          --serial file,path=/var/log/proxmox-testbed/console.log \
+          --console pty,target.type=serial \
+          --boot hd \
+          --import \
+          --noautoconsole
+      args:
+        executable: /bin/bash
 
-- name: Show serial log on failure
-  ansible.builtin.debug:
-    var: serial_log.stdout
-  when: serial_log is defined and serial_log.stdout is defined
-  failed_when: true
-
-- name: Reconfigure VM boot order and start from disk
-  ansible.builtin.shell: |
-    set -e
-    virt-xml {{ proxmox_vm_name }} --edit --boot hd,cdrom
-    virsh start {{ proxmox_vm_name }}
-  args:
-    executable: /bin/bash
-  when: vm_check.rc != 0
+# --- Wait for Proxmox to be ready ---
 
 - name: Wait for Proxmox VM to be running
   ansible.builtin.command: virsh domstate {{ proxmox_vm_name }}
@@ -240,9 +224,18 @@
   delay: 10
   changed_when: false
 
+- name: Set VM to autostart
+  ansible.builtin.command: virsh autostart {{ proxmox_vm_name }}
+  changed_when: false
+
 - name: Wait for Proxmox API to become available
   ansible.builtin.uri:
-    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/version"
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/ticket"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      username: "{{ proxmox_api_user }}"
+      password: "{{ proxmox_root_password }}"
     validate_certs: false
     status_code: 200
   register: api_check
@@ -254,4 +247,4 @@
   ansible.builtin.debug:
     msg: >
       Proxmox VE is running at https://{{ proxmox_api_host }}:{{ proxmox_api_port }}
-      Serial log at /var/log/proxmox-testbed/console.log
+      Serial log: /var/log/proxmox-testbed/console.log

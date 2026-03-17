@@ -6,10 +6,13 @@
     timeout: 300
   delegate_to: localhost
 
-- name: Disable Proxmox enterprise repository
+- name: Disable Proxmox enterprise repositories
   ansible.builtin.file:
-    path: /etc/apt/sources.list.d/pve-enterprise.list
+    path: "{{ item }}"
     state: absent
+  loop:
+    - /etc/apt/sources.list.d/pve-enterprise.list
+    - /etc/apt/sources.list.d/ceph.list
 
 - name: Add Proxmox no-subscription repository
   ansible.builtin.copy:
@@ -22,22 +25,23 @@
   ansible.builtin.apt:
     update_cache: true
 
-- name: Create Ansible API token
+- name: Create admin API token
   ansible.builtin.shell: |
     set -e
-    # Create API token for automation
+    # Delete existing token if present, then recreate to get the secret
+    pvesh delete /access/users/root@pam/token/{{ proxmox_api_token_id }} 2>/dev/null || true
+    # Create token with full privileges (privsep=0)
     pvesh create /access/users/root@pam/token/{{ proxmox_api_token_id }} \
-      --privsep 0 2>/dev/null || true
-    # Get the token value
-    pvesh get /access/users/root@pam/token/{{ proxmox_api_token_id }} --output-format json
+      --privsep 0 --output-format json
   args:
     executable: /bin/bash
-  register: token_result
-  changed_when: "'already exists' not in token_result.stderr"
+  register: token_create_result
+  changed_when: true
 
-- name: Save API token info
-  ansible.builtin.debug:
-    msg: "API token created. Use root@pam!{{ proxmox_api_token_id }} for API access."
+- name: Extract API token secret
+  ansible.builtin.set_fact:
+    api_token_secret: "{{ (token_create_result.stdout | from_json).value }}"
+    api_token_full_id: "root@pam!{{ proxmox_api_token_id }}"
 
 - name: Ensure cloud image directory exists
   ansible.builtin.file:
@@ -50,7 +54,6 @@
     url: "{{ cloud_image_url }}"
     dest: "/var/lib/vz/images/{{ cloud_image_filename }}"
     mode: "0644"
-  register: cloud_image_download
 
 - name: Check if cloud-init template already exists
   ansible.builtin.shell: qm status {{ template_vmid }} 2>/dev/null
@@ -76,7 +79,6 @@
         qm importdisk {{ template_vmid }}
         /var/lib/vz/images/{{ cloud_image_filename }}
         local-lvm
-      register: import_result
 
     - name: Attach imported disk as scsi0
       ansible.builtin.command: >
@@ -108,8 +110,19 @@
   register: template_verify
   changed_when: false
 
-- name: Proxmox configuration complete
+- name: Print deployment summary
   ansible.builtin.debug:
-    msg: >
-      Proxmox configured: enterprise repo disabled, API token created,
-      cloud-init template {{ template_vmid }} ({{ template_name }}) ready.
+    msg:
+      - "============================================"
+      - "  Proxmox VE Testbed — Configuration Done"
+      - "============================================"
+      - ""
+      - "Web UI:      https://{{ proxmox_vm_ip }}:8006"
+      - "Node:        {{ proxmox_node }}"
+      - "Root user:   root@pam / {{ proxmox_root_password }}"
+      - ""
+      - "API Token ID:     {{ api_token_full_id }}"
+      - "API Token Secret: {{ api_token_secret }}"
+      - ""
+      - "Cloud-init template: {{ template_name }} (VMID {{ template_vmid }})"
+      - "============================================"

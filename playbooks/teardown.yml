@@ -5,37 +5,46 @@
 #   ansible-playbook playbooks/teardown.yml
 #
 # This will:
-#   1. Destroy guest VMs via Proxmox API
+#   1. Destroy guest VMs via Proxmox API (if reachable)
 #   2. Destroy the Proxmox VM via libvirt
 #   3. Remove the libvirt network
+#   4. Clean up temp files
 
-- name: Destroy guest VMs
+- name: Destroy guest VMs via Proxmox API
   hosts: hypervisor
   tasks:
-    - name: Stop and destroy guest VMs via Proxmox API
+    - name: Check if Proxmox API is reachable
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json"
+        validate_certs: false
+        timeout: 5
+      register: api_reachable
+      ignore_errors: true
+
+    - name: Stop and destroy guest VMs
       community.proxmox.proxmox_kvm:
         api_host: "{{ proxmox_api_host }}"
         api_user: "{{ proxmox_api_user }}"
-        api_token_id: "{{ proxmox_api_token_id }}"
-        api_token_secret: "{{ proxmox_api_token_secret }}"
+        api_password: "{{ proxmox_root_password }}"
         node: "{{ proxmox_node }}"
         vmid: "{{ item.vmid }}"
         state: absent
         force: true
       loop: "{{ guest_vms }}"
       ignore_errors: true
+      when: api_reachable is succeeded
 
     - name: Destroy cloud-init template
       community.proxmox.proxmox_kvm:
         api_host: "{{ proxmox_api_host }}"
         api_user: "{{ proxmox_api_user }}"
-        api_token_id: "{{ proxmox_api_token_id }}"
-        api_token_secret: "{{ proxmox_api_token_secret }}"
+        api_password: "{{ proxmox_root_password }}"
         node: "{{ proxmox_node }}"
         vmid: "{{ template_vmid }}"
         state: absent
         force: true
       ignore_errors: true
+      when: api_reachable is succeeded
 
 - name: Destroy Proxmox VM and network
   hosts: hypervisor
@@ -57,13 +66,17 @@
         executable: /bin/bash
       changed_when: true
 
-    - name: Clean up answer ISO
+    - name: Clean up temp and log files
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
-        - /tmp/proxmox-answer.iso
-        - /tmp/proxmox-answer
+        - /tmp/pve-remaster
+        - /tmp/pve-iso-mount
+        - /tmp/pve-answer
+        - /tmp/pve-answer.iso
+        - /tmp/pve-remaster-mbr.bin
+        - /var/log/proxmox-testbed
 
     - name: Teardown complete
       ansible.builtin.debug:

@@ -67,4 +67,4 @@ guest_vms:
 
 guest_default_user: "ubuntu"
 guest_default_password: "ubuntu"
-guest_ssh_public_key: "{{ lookup('file', '~/.ssh/id_ed25519.pub', errors='ignore') | default('') }}"
+guest_ssh_public_key: "{{ lookup('file', '~/.ssh/id_rsa.pub', errors='ignore') | default('', true) }}"
