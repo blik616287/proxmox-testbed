@@ -28,6 +28,9 @@
       - python3-pip
       - python3-libvirt
       - cpu-checker
+      - xorriso
+      - isolinux
+      - rsync
     state: present
     update_cache: true
     cache_valid_time: 3600

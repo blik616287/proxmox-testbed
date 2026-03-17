@@ -44,7 +44,7 @@
     - name: Destroy Proxmox VM
       ansible.builtin.shell: |
         virsh destroy {{ proxmox_vm_name }} 2>/dev/null || true
-        virsh undefine {{ proxmox_vm_name }} --remove-all-storage 2>/dev/null || true
+        virsh undefine {{ proxmox_vm_name }} --storage {{ proxmox_vm_disk_path }} 2>/dev/null || true
       args:
         executable: /bin/bash
       changed_when: true
