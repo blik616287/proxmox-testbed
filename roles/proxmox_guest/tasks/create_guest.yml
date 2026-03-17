@@ -33,8 +33,10 @@
     ciuser: "{{ guest_default_user }}"
     cipassword: "{{ guest_default_password }}"
     sshkeys: "{{ guest_ssh_public_key }}"
-    ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
-    nameserver: "{{ libvirt_net_gateway }}"
+    ipconfig:
+      ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
+    nameservers:
+      - "{{ libvirt_net_gateway }}"
     update: true
   when: guest_ssh_public_key | default('', true) | length > 0
 
@@ -47,8 +49,10 @@
     vmid: "{{ vm.vmid }}"
     ciuser: "{{ guest_default_user }}"
     cipassword: "{{ guest_default_password }}"
-    ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
-    nameserver: "{{ libvirt_net_gateway }}"
+    ipconfig:
+      ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
+    nameservers:
+      - "{{ libvirt_net_gateway }}"
     update: true
   when: guest_ssh_public_key | default('', true) | length == 0
 
