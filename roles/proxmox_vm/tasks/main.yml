@@ -12,7 +12,43 @@
     mode: "0644"
     checksum: "{{ proxmox_iso_checksum }}"
 
-- name: Create temp directory for answer files
+# --- Extract kernel + initrd from ISO for direct boot ---
+
+- name: Create mount and work directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /tmp/pve-iso-mount
+    - /tmp/pve-work
+
+- name: Mount Proxmox ISO
+  ansible.posix.mount:
+    path: /tmp/pve-iso-mount
+    src: "{{ iso_cache_dir }}/{{ proxmox_iso_filename }}"
+    fstype: iso9660
+    opts: loop,ro
+    state: ephemeral
+
+- name: Copy kernel and initrd from ISO
+  ansible.builtin.copy:
+    src: "/tmp/pve-iso-mount/boot/{{ item }}"
+    dest: "/tmp/pve-work/{{ item }}"
+    mode: "0644"
+    remote_src: true
+  loop:
+    - linux26
+    - initrd.img
+
+- name: Unmount ISO
+  ansible.posix.mount:
+    path: /tmp/pve-iso-mount
+    state: unmounted
+
+# --- Build answer ISO ---
+
+- name: Create answer file directory
   ansible.builtin.file:
     path: /tmp/pve-answer
     state: directory
@@ -32,17 +68,17 @@
     dest: /tmp/pve-answer/auto-installer-mode.toml
     mode: "0644"
 
-- name: Create remastered ISO with auto-installer files injected
-  ansible.builtin.shell: |
-    set -e
-    cp "{{ iso_cache_dir }}/{{ proxmox_iso_filename }}" "{{ iso_cache_dir }}/proxmox-ve-auto.iso"
-    xorriso -dev "{{ iso_cache_dir }}/proxmox-ve-auto.iso" -boot_image any keep \
-      -map /tmp/pve-answer/answer.toml /answer.toml \
-      -map /tmp/pve-answer/auto-installer-mode.toml /auto-installer-mode.toml \
-      -commit
+- name: Build answer ISO (labeled proxmox-ais)
+  ansible.builtin.command: >
+    genisoimage
+    -o /tmp/pve-answer.iso
+    -V proxmox-ais
+    -r -J
+    /tmp/pve-answer/
   args:
-    executable: /bin/bash
-    creates: "{{ iso_cache_dir }}/proxmox-ve-auto.iso"
+    creates: /tmp/pve-answer.iso
+
+# --- Create and boot VM ---
 
 - name: Check if Proxmox VM already exists
   ansible.builtin.command: virsh dominfo {{ proxmox_vm_name }}
@@ -59,20 +95,24 @@
     creates: "{{ proxmox_vm_disk_path }}"
   when: vm_check.rc != 0
 
-- name: Create and start Proxmox VM with virt-install
-  ansible.builtin.command: >
-    virt-install
-    --name {{ proxmox_vm_name }}
-    --ram {{ proxmox_vm_ram_mb }}
-    --vcpus {{ proxmox_vm_vcpus }}
-    --cpu host-passthrough
-    --disk path={{ proxmox_vm_disk_path }},bus=virtio,format=qcow2
-    --cdrom {{ iso_cache_dir }}/proxmox-ve-auto.iso
-    --network network={{ libvirt_net_name }},mac={{ proxmox_vm_mac }},model=virtio
-    --os-variant debian12
-    --graphics vnc,listen=127.0.0.1
-    --boot cdrom,hd
-    --noautoconsole
+- name: Create and start Proxmox VM with direct kernel boot
+  ansible.builtin.shell: |
+    virt-install \
+      --name {{ proxmox_vm_name }} \
+      --ram {{ proxmox_vm_ram_mb }} \
+      --vcpus {{ proxmox_vm_vcpus }} \
+      --cpu host-passthrough \
+      --disk path={{ proxmox_vm_disk_path }},bus=virtio,format=qcow2 \
+      --disk path={{ iso_cache_dir }}/{{ proxmox_iso_filename }},device=cdrom,bus=sata \
+      --disk path=/tmp/pve-answer.iso,device=cdrom,bus=sata \
+      --network network={{ libvirt_net_name }},mac={{ proxmox_vm_mac }},model=virtio \
+      --os-variant debian12 \
+      --graphics vnc,listen=127.0.0.1 \
+      --install no_install=yes \
+      --boot kernel=/tmp/pve-work/linux26,initrd=/tmp/pve-work/initrd.img,kernel_args="ro ramdisk_size=16777216 rw quiet splash=silent proxmox-start-auto-installer" \
+      --noautoconsole
+  args:
+    executable: /bin/bash
   when: vm_check.rc != 0
 
 - name: Wait for Proxmox installation to complete (VM shuts down after install)
@@ -95,10 +135,12 @@
   when: vm_check.rc != 0
   timeout: 3600
 
-- name: Start Proxmox VM from disk after install
+- name: Reconfigure VM to boot from disk (remove direct kernel boot)
   ansible.builtin.shell: |
     set -e
-    virt-xml {{ proxmox_vm_name }} --edit --boot hd,cdrom
+    # Remove the direct kernel/initrd boot config and set boot to disk
+    virt-xml {{ proxmox_vm_name }} --remove-device --boot kernel=/tmp/pve-work/linux26 2>/dev/null || true
+    virt-xml {{ proxmox_vm_name }} --edit --boot hd
     virsh start {{ proxmox_vm_name }}
   args:
     executable: /bin/bash
@@ -124,8 +166,13 @@
 
 - name: Clean up temp files
   ansible.builtin.file:
-    path: /tmp/pve-answer
+    path: "{{ item }}"
     state: absent
+  loop:
+    - /tmp/pve-answer
+    - /tmp/pve-answer.iso
+    - /tmp/pve-work
+    - /tmp/pve-iso-mount
 
 - name: Proxmox VM is ready
   ansible.builtin.debug:
