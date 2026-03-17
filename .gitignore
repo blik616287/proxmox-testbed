@@ -1,0 +1,24 @@
+# Build artifacts
+*.iso
+*.qcow2
+*.img
+
+# Ansible retry files
+*.retry
+
+# Temp/cache
+/tmp/
+__pycache__/
+*.pyc
+
+# Secrets
+*.vault
+vault-password*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
+Claude.md

@@ -1,0 +1,6 @@
+---
+- name: Create and install Proxmox VE VM
+  hosts: hypervisor
+  become: true
+  roles:
+    - proxmox_vm

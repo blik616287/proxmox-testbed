@@ -1,0 +1,6 @@
+---
+- name: Prepare host for Proxmox testbed
+  hosts: hypervisor
+  become: true
+  roles:
+    - host_prepare

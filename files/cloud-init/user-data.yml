@@ -1,0 +1,19 @@
+#cloud-config
+# Default cloud-init user-data for guest VMs
+# This is a reference — cloud-init is configured via Proxmox API in the proxmox_guest role
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: false
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - qemu-guest-agent
+  - curl
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent

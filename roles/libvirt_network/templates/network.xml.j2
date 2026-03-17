@@ -1,0 +1,11 @@
+<network>
+  <name>{{ libvirt_net_name }}</name>
+  <bridge name="{{ libvirt_net_bridge }}" stp="on" delay="0"/>
+  <forward mode="nat"/>
+  <ip address="{{ libvirt_net_gateway }}" netmask="255.255.255.0">
+    <dhcp>
+      <range start="{{ libvirt_net_dhcp_start }}" end="{{ libvirt_net_dhcp_end }}"/>
+      <host mac="{{ proxmox_vm_mac }}" name="{{ proxmox_vm_name }}" ip="{{ proxmox_vm_ip }}"/>
+    </dhcp>
+  </ip>
+</network>

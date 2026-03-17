@@ -1,0 +1,70 @@
+---
+# Teardown — destroys the entire testbed
+#
+# Usage:
+#   ansible-playbook playbooks/teardown.yml
+#
+# This will:
+#   1. Destroy guest VMs via Proxmox API
+#   2. Destroy the Proxmox VM via libvirt
+#   3. Remove the libvirt network
+
+- name: Destroy guest VMs
+  hosts: hypervisor
+  tasks:
+    - name: Stop and destroy guest VMs via Proxmox API
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ item.vmid }}"
+        state: absent
+        force: true
+      loop: "{{ guest_vms }}"
+      ignore_errors: true
+
+    - name: Destroy cloud-init template
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ template_vmid }}"
+        state: absent
+        force: true
+      ignore_errors: true
+
+- name: Destroy Proxmox VM and network
+  hosts: hypervisor
+  become: true
+  tasks:
+    - name: Destroy Proxmox VM
+      ansible.builtin.shell: |
+        virsh destroy {{ proxmox_vm_name }} 2>/dev/null || true
+        virsh undefine {{ proxmox_vm_name }} --remove-all-storage 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Destroy libvirt network
+      ansible.builtin.shell: |
+        virsh net-destroy {{ libvirt_net_name }} 2>/dev/null || true
+        virsh net-undefine {{ libvirt_net_name }} 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Clean up answer ISO
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/proxmox-answer.iso
+        - /tmp/proxmox-answer
+
+    - name: Teardown complete
+      ansible.builtin.debug:
+        msg: "Testbed destroyed. Run 'ansible-playbook playbooks/site.yml' to recreate."

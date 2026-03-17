@@ -1,0 +1,10 @@
+---
+- name: Provision guest VMs
+  include_tasks: create_guest.yml
+  loop: "{{ guest_vms }}"
+  loop_control:
+    loop_var: vm
+
+- name: All guest VMs provisioned
+  ansible.builtin.debug:
+    msg: "{{ guest_vms | length }} guest VMs created and started"

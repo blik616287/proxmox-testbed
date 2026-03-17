@@ -1,0 +1,18 @@
+---
+# Master playbook — stands up the entire Proxmox testbed end-to-end
+#
+# Usage:
+#   ansible-playbook playbooks/site.yml
+#
+# Or run individual stages:
+#   ansible-playbook playbooks/00-prereqs.yml
+#   ansible-playbook playbooks/01-network.yml
+#   ansible-playbook playbooks/02-proxmox-vm.yml
+#   ansible-playbook playbooks/03-proxmox-configure.yml
+#   ansible-playbook playbooks/04-provision-vms.yml
+
+- import_playbook: 00-prereqs.yml
+- import_playbook: 01-network.yml
+- import_playbook: 02-proxmox-vm.yml
+- import_playbook: 03-proxmox-configure.yml
+- import_playbook: 04-provision-vms.yml

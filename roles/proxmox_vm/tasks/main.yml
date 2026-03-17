@@ -1,0 +1,133 @@
+---
+- name: Ensure ISO cache directory exists
+  ansible.builtin.file:
+    path: "{{ iso_cache_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download Proxmox VE ISO
+  ansible.builtin.get_url:
+    url: "{{ proxmox_iso_url }}"
+    dest: "{{ iso_cache_dir }}/{{ proxmox_iso_filename }}"
+    mode: "0644"
+    checksum: "{{ proxmox_iso_checksum }}"
+
+- name: Create temp directory for answer files
+  ansible.builtin.file:
+    path: /tmp/pve-answer
+    state: directory
+    mode: "0755"
+
+- name: Render answer.toml
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../templates/proxmox-answer.toml.j2"
+    dest: /tmp/pve-answer/answer.toml
+    mode: "0644"
+
+- name: Create auto-installer-mode.toml
+  ansible.builtin.copy:
+    content: |
+      [mode]
+      source = "iso"
+    dest: /tmp/pve-answer/auto-installer-mode.toml
+    mode: "0644"
+
+- name: Create remastered ISO with auto-installer files injected
+  ansible.builtin.shell: |
+    set -e
+    cp "{{ iso_cache_dir }}/{{ proxmox_iso_filename }}" "{{ iso_cache_dir }}/proxmox-ve-auto.iso"
+    xorriso -dev "{{ iso_cache_dir }}/proxmox-ve-auto.iso" -boot_image any keep \
+      -map /tmp/pve-answer/answer.toml /answer.toml \
+      -map /tmp/pve-answer/auto-installer-mode.toml /auto-installer-mode.toml \
+      -commit
+  args:
+    executable: /bin/bash
+    creates: "{{ iso_cache_dir }}/proxmox-ve-auto.iso"
+
+- name: Check if Proxmox VM already exists
+  ansible.builtin.command: virsh dominfo {{ proxmox_vm_name }}
+  register: vm_check
+  changed_when: false
+  failed_when: false
+
+- name: Create Proxmox VM disk
+  ansible.builtin.command: >
+    qemu-img create -f qcow2
+    {{ proxmox_vm_disk_path }}
+    {{ proxmox_vm_disk_size }}
+  args:
+    creates: "{{ proxmox_vm_disk_path }}"
+  when: vm_check.rc != 0
+
+- name: Create and start Proxmox VM with virt-install
+  ansible.builtin.command: >
+    virt-install
+    --name {{ proxmox_vm_name }}
+    --ram {{ proxmox_vm_ram_mb }}
+    --vcpus {{ proxmox_vm_vcpus }}
+    --cpu host-passthrough
+    --disk path={{ proxmox_vm_disk_path }},bus=virtio,format=qcow2
+    --cdrom {{ iso_cache_dir }}/proxmox-ve-auto.iso
+    --network network={{ libvirt_net_name }},mac={{ proxmox_vm_mac }},model=virtio
+    --os-variant debian12
+    --graphics vnc,listen=127.0.0.1
+    --boot cdrom,hd
+    --noautoconsole
+  when: vm_check.rc != 0
+
+- name: Wait for Proxmox installation to complete (VM shuts down after install)
+  ansible.builtin.shell: |
+    set -e
+    for i in $(seq 1 120); do
+      state=$(virsh domstate {{ proxmox_vm_name }} 2>/dev/null || echo "unknown")
+      if [ "$state" = "shut off" ]; then
+        echo "Installation complete"
+        exit 0
+      fi
+      sleep 30
+    done
+    echo "Timeout waiting for install to complete"
+    exit 1
+  args:
+    executable: /bin/bash
+  register: install_wait
+  changed_when: false
+  when: vm_check.rc != 0
+  timeout: 3600
+
+- name: Start Proxmox VM from disk after install
+  ansible.builtin.shell: |
+    set -e
+    virt-xml {{ proxmox_vm_name }} --edit --boot hd,cdrom
+    virsh start {{ proxmox_vm_name }}
+  args:
+    executable: /bin/bash
+  when: vm_check.rc != 0
+
+- name: Wait for Proxmox VM to be running
+  ansible.builtin.command: virsh domstate {{ proxmox_vm_name }}
+  register: vm_state
+  until: vm_state.stdout.strip() == "running"
+  retries: 30
+  delay: 10
+  changed_when: false
+
+- name: Wait for Proxmox API to become available
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/version"
+    validate_certs: false
+    status_code: 200
+  register: api_check
+  until: api_check.status == 200
+  retries: 60
+  delay: 10
+
+- name: Clean up temp files
+  ansible.builtin.file:
+    path: /tmp/pve-answer
+    state: absent
+
+- name: Proxmox VM is ready
+  ansible.builtin.debug:
+    msg: >
+      Proxmox VE is running at https://{{ proxmox_api_host }}:{{ proxmox_api_port }}

@@ -1,0 +1,19 @@
+[global]
+keyboard = "en-us"
+country = "us"
+fqdn = "{{ proxmox_fqdn }}"
+mailto = "root@localhost"
+timezone = "UTC"
+root-password = "{{ proxmox_root_password }}"
+reboot-on-error = true
+
+[network]
+source = "from-answer"
+cidr = "{{ proxmox_vm_ip }}/{{ libvirt_net_prefix }}"
+dns = "{{ libvirt_net_gateway }}"
+gateway = "{{ libvirt_net_gateway }}"
+filter.interface-name = "en*"
+
+[disk-setup]
+filesystem = "ext4"
+disk-list = ["vda"]

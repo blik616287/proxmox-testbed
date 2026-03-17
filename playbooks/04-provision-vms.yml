@@ -1,0 +1,5 @@
+---
+- name: Provision guest VMs inside Proxmox
+  hosts: hypervisor
+  roles:
+    - proxmox_guest

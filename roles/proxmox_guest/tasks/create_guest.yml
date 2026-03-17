@@ -1,0 +1,91 @@
+---
+- name: "Clone {{ vm.name }} from template"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    node: "{{ proxmox_node }}"
+    clone: "{{ template_name }}"
+    newid: "{{ vm.vmid }}"
+    name: "{{ vm.name }}"
+    full: true
+    storage: local-lvm
+    timeout: 300
+  register: clone_result
+
+- name: "Configure {{ vm.name }} resources"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ vm.vmid }}"
+    cores: "{{ vm.cores }}"
+    memory: "{{ vm.memory }}"
+    update: true
+
+- name: "Configure {{ vm.name }} cloud-init"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ vm.vmid }}"
+    ciuser: "{{ guest_default_user }}"
+    cipassword: "{{ guest_default_password }}"
+    sshkeys: "{{ guest_ssh_public_key }}"
+    ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
+    nameserver: "{{ libvirt_net_gateway }}"
+    update: true
+  when: guest_ssh_public_key | length > 0
+
+- name: "Configure {{ vm.name }} cloud-init (no SSH key)"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ vm.vmid }}"
+    ciuser: "{{ guest_default_user }}"
+    cipassword: "{{ guest_default_password }}"
+    ipconfig0: "ip={{ vm.ip }},gw={{ vm.gw }}"
+    nameserver: "{{ libvirt_net_gateway }}"
+    update: true
+  when: guest_ssh_public_key | length == 0
+
+- name: "Resize {{ vm.name }} disk"
+  community.proxmox.proxmox_disk:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    vmid: "{{ vm.vmid }}"
+    disk: scsi0
+    size: "{{ vm.disk_size }}"
+    state: resized
+  when: vm.disk_size is defined
+
+- name: "Start {{ vm.name }}"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ vm.vmid }}"
+    state: started
+
+- name: "Wait for {{ vm.name }} SSH"
+  ansible.builtin.wait_for:
+    host: "{{ vm.ip | regex_replace('/.*', '') }}"
+    port: 22
+    timeout: 300
+  delegate_to: localhost
+
+- name: "{{ vm.name }} is ready"
+  ansible.builtin.debug:
+    msg: "{{ vm.name }} (VMID {{ vm.vmid }}) running at {{ vm.ip }}"

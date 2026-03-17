@@ -1,0 +1,6 @@
+---
+- name: Configure Proxmox VE post-install
+  hosts: proxmox
+  become: true
+  roles:
+    - proxmox_configure

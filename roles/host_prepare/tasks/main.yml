@@ -1,0 +1,66 @@
+---
+- name: Check for KVM support
+  ansible.builtin.command: kvm-ok
+  register: kvm_check
+  changed_when: false
+  failed_when: kvm_check.rc != 0
+
+- name: Check nested virtualization is enabled
+  ansible.builtin.shell: |
+    set -o pipefail
+    cat /sys/module/kvm_intel/parameters/nested 2>/dev/null || \
+    cat /sys/module/kvm_amd/parameters/nested 2>/dev/null
+  args:
+    executable: /bin/bash
+  register: nested_virt
+  changed_when: false
+  failed_when: nested_virt.stdout.strip() not in ['Y', '1']
+
+- name: Install required system packages
+  ansible.builtin.apt:
+    name:
+      - qemu-kvm
+      - libvirt-daemon-system
+      - libvirt-clients
+      - virtinst
+      - genisoimage
+      - libguestfs-tools
+      - python3-pip
+      - python3-libvirt
+      - cpu-checker
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install required Python packages
+  ansible.builtin.pip:
+    name:
+      - proxmoxer
+      - requests
+    state: present
+    executable: "{{ ansible_playbook_python | dirname }}/pip3"
+    break_system_packages: true
+
+- name: Ensure libvirtd is running
+  ansible.builtin.service:
+    name: libvirtd
+    state: started
+    enabled: true
+
+- name: Ensure current user is in libvirt group
+  ansible.builtin.user:
+    name: "{{ ansible_facts['user_id'] }}"
+    groups:
+      - libvirt
+      - kvm
+    append: true
+
+- name: Verify proxmoxer is importable
+  ansible.builtin.command: "{{ ansible_playbook_python }} -c \"import proxmoxer; print('ok')\""
+  register: proxmoxer_check
+  changed_when: false
+  failed_when: proxmoxer_check.rc != 0
+
+- name: Host preparation complete
+  ansible.builtin.debug:
+    msg: "Host is ready: nested virt enabled, all packages installed, proxmoxer available"

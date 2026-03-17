@@ -1,0 +1,70 @@
+---
+# ============================================================
+# Proxmox Testbed — Shared Variables
+# ============================================================
+
+# --- Paths ---
+iso_cache_dir: /var/lib/libvirt/images
+vm_disk_dir: /var/lib/libvirt/images
+
+# --- Proxmox VE ISO ---
+proxmox_version: "8.4"
+proxmox_iso_url: "https://enterprise.proxmox.com/iso/proxmox-ve_8.4-1.iso"
+proxmox_iso_filename: "proxmox-ve_8.4-1.iso"
+proxmox_iso_checksum: "sha256:d237d70ca48a9f6eb47f95fd4fd337722c3f69f8106393844d027d28c26523d8"
+
+# --- Libvirt Network ---
+libvirt_net_name: proxmox-testbed
+libvirt_net_bridge: virbr-pve
+libvirt_net_subnet: "10.100.0.0"
+libvirt_net_prefix: "24"
+libvirt_net_gateway: "10.100.0.1"
+libvirt_net_dhcp_start: "10.100.0.100"
+libvirt_net_dhcp_end: "10.100.0.199"
+
+# --- Proxmox VM (the hypervisor itself) ---
+proxmox_vm_name: proxmox-ve
+proxmox_vm_ip: "10.100.0.2"
+proxmox_vm_mac: "52:54:00:aa:bb:01"
+proxmox_vm_ram_mb: 16384
+proxmox_vm_vcpus: 8
+proxmox_vm_disk_size: "120G"
+proxmox_vm_disk_path: "{{ vm_disk_dir }}/proxmox-ve.qcow2"
+proxmox_root_password: "testbed123"
+proxmox_fqdn: "proxmox.testbed.local"
+
+# --- Proxmox API ---
+proxmox_api_host: "{{ proxmox_vm_ip }}"
+proxmox_api_port: 8006
+proxmox_api_user: "root@pam"
+proxmox_api_token_id: "ansible"
+proxmox_api_token_secret: ""  # populated by proxmox_configure role
+proxmox_node: "proxmox"
+
+# --- Cloud Image (for guest VM template) ---
+cloud_image_url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+cloud_image_filename: "noble-server-cloudimg-amd64.img"
+cloud_image_checksum: ""  # set if you want to pin a specific version
+template_vmid: 9000
+template_name: "ubuntu-cloud-template"
+
+# --- Guest VMs ---
+guest_vms:
+  - name: test-vm-1
+    vmid: 100
+    cores: 2
+    memory: 2048
+    disk_size: "20G"
+    ip: "10.100.0.101/24"
+    gw: "{{ libvirt_net_gateway }}"
+  - name: test-vm-2
+    vmid: 101
+    cores: 2
+    memory: 2048
+    disk_size: "20G"
+    ip: "10.100.0.102/24"
+    gw: "{{ libvirt_net_gateway }}"
+
+guest_default_user: "ubuntu"
+guest_default_password: "ubuntu"
+guest_ssh_public_key: "{{ lookup('file', '~/.ssh/id_ed25519.pub', errors='ignore') | default('') }}"

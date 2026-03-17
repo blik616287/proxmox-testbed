@@ -1,0 +1,6 @@
+---
+- name: Create libvirt network for Proxmox testbed
+  hosts: hypervisor
+  become: true
+  roles:
+    - libvirt_network

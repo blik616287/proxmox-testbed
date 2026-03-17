@@ -1,0 +1,115 @@
+---
+- name: Wait for SSH to be available on Proxmox
+  ansible.builtin.wait_for:
+    host: "{{ proxmox_vm_ip }}"
+    port: 22
+    timeout: 300
+  delegate_to: localhost
+
+- name: Disable Proxmox enterprise repository
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pve-enterprise.list
+    state: absent
+
+- name: Add Proxmox no-subscription repository
+  ansible.builtin.copy:
+    content: |
+      deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription
+    dest: /etc/apt/sources.list.d/pve-no-subscription.list
+    mode: "0644"
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Create Ansible API token
+  ansible.builtin.shell: |
+    set -e
+    # Create API token for automation
+    pvesh create /access/users/root@pam/token/{{ proxmox_api_token_id }} \
+      --privsep 0 2>/dev/null || true
+    # Get the token value
+    pvesh get /access/users/root@pam/token/{{ proxmox_api_token_id }} --output-format json
+  args:
+    executable: /bin/bash
+  register: token_result
+  changed_when: "'already exists' not in token_result.stderr"
+
+- name: Save API token info
+  ansible.builtin.debug:
+    msg: "API token created. Use root@pam!{{ proxmox_api_token_id }} for API access."
+
+- name: Ensure cloud image directory exists
+  ansible.builtin.file:
+    path: /var/lib/vz/images
+    state: directory
+    mode: "0755"
+
+- name: Download Ubuntu cloud image
+  ansible.builtin.get_url:
+    url: "{{ cloud_image_url }}"
+    dest: "/var/lib/vz/images/{{ cloud_image_filename }}"
+    mode: "0644"
+  register: cloud_image_download
+
+- name: Check if cloud-init template already exists
+  ansible.builtin.shell: qm status {{ template_vmid }} 2>/dev/null
+  register: template_check
+  changed_when: false
+  failed_when: false
+
+- name: Create cloud-init VM template
+  when: template_check.rc != 0
+  block:
+    - name: Create VM for template
+      ansible.builtin.command: >
+        qm create {{ template_vmid }}
+        --name {{ template_name }}
+        --memory 2048
+        --cores 2
+        --net0 virtio,bridge=vmbr0
+        --agent enabled=1
+        --ostype l26
+
+    - name: Import cloud image disk
+      ansible.builtin.command: >
+        qm importdisk {{ template_vmid }}
+        /var/lib/vz/images/{{ cloud_image_filename }}
+        local-lvm
+      register: import_result
+
+    - name: Attach imported disk as scsi0
+      ansible.builtin.command: >
+        qm set {{ template_vmid }}
+        --scsihw virtio-scsi-pci
+        --scsi0 local-lvm:vm-{{ template_vmid }}-disk-0
+
+    - name: Add cloud-init drive
+      ansible.builtin.command: >
+        qm set {{ template_vmid }}
+        --ide2 local-lvm:cloudinit
+
+    - name: Set boot order to scsi0
+      ansible.builtin.command: >
+        qm set {{ template_vmid }}
+        --boot order=scsi0
+
+    - name: Add serial console (for cloud-init)
+      ansible.builtin.command: >
+        qm set {{ template_vmid }}
+        --serial0 socket
+        --vga serial0
+
+    - name: Convert VM to template
+      ansible.builtin.command: qm template {{ template_vmid }}
+
+- name: Verify template exists
+  ansible.builtin.shell: qm status {{ template_vmid }}
+  register: template_verify
+  changed_when: false
+
+- name: Proxmox configuration complete
+  ansible.builtin.debug:
+    msg: >
+      Proxmox configured: enterprise repo disabled, API token created,
+      cloud-init template {{ template_vmid }} ({{ template_name }}) ready.

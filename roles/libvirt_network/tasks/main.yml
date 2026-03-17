@@ -1,0 +1,42 @@
+---
+- name: Render libvirt network XML
+  ansible.builtin.template:
+    src: network.xml.j2
+    dest: /tmp/proxmox-testbed-net.xml
+    mode: "0644"
+
+- name: Check if network already exists
+  ansible.builtin.command: virsh net-info {{ libvirt_net_name }}
+  register: net_check
+  changed_when: false
+  failed_when: false
+
+- name: Define libvirt network
+  ansible.builtin.command: virsh net-define /tmp/proxmox-testbed-net.xml
+  when: net_check.rc != 0
+
+- name: Start libvirt network
+  ansible.builtin.command: virsh net-start {{ libvirt_net_name }}
+  register: net_start
+  changed_when: net_start.rc == 0
+  failed_when: false
+  when: net_check.rc != 0 or 'inactive' in (net_check.stdout | default(''))
+
+- name: Set network to autostart
+  ansible.builtin.command: virsh net-autostart {{ libvirt_net_name }}
+  changed_when: false
+
+- name: Verify network is active
+  ansible.builtin.command: virsh net-info {{ libvirt_net_name }}
+  register: net_verify
+  changed_when: false
+  failed_when: "'Active:' not in net_verify.stdout or 'yes' not in net_verify.stdout.split('Active:')[1].split('\n')[0]"
+
+- name: Clean up temp XML
+  ansible.builtin.file:
+    path: /tmp/proxmox-testbed-net.xml
+    state: absent
+
+- name: Network ready
+  ansible.builtin.debug:
+    msg: "Network {{ libvirt_net_name }} is active on {{ libvirt_net_gateway }}/{{ libvirt_net_prefix }}"
