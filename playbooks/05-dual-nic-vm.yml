@@ -1,0 +1,222 @@
+---
+# Create a VM with two NICs bridged to the same VLAN
+#
+# Usage:
+#   ansible-playbook playbooks/05-dual-nic-vm.yml
+#
+# Override defaults:
+#   ansible-playbook playbooks/05-dual-nic-vm.yml -e dual_nic_vlan=20 -e dual_nic_vmid=200
+
+- name: Create dual-NIC VM on same VLAN
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    dual_nic_vm_name: dual-nic-vm
+    dual_nic_vmid: 200
+    dual_nic_cores: 2
+    dual_nic_memory: 2048
+    dual_nic_disk_size: "20G"
+    dual_nic_bridge: vmbr0
+    dual_nic_ip0: "10.100.0.200/24"
+    dual_nic_ip1: "10.100.0.201/24"
+    dual_nic_gw: "{{ libvirt_net_gateway }}"
+
+  tasks:
+    - name: Clone {{ dual_nic_vm_name }} from template
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_root_password }}"
+        node: "{{ proxmox_node }}"
+        clone: "{{ template_name }}"
+        newid: "{{ dual_nic_vmid }}"
+        name: "{{ dual_nic_vm_name }}"
+        full: true
+        storage: local-lvm
+        timeout: 300
+
+    - name: Configure {{ dual_nic_vm_name }} resources
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_root_password }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dual_nic_vmid }}"
+        cores: "{{ dual_nic_cores }}"
+        memory: "{{ dual_nic_memory }}"
+        update: true
+
+    - name: Get Proxmox API ticket
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/access/ticket"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          username: "{{ proxmox_api_user }}"
+          password: "{{ proxmox_root_password }}"
+        validate_certs: false
+      register: _pve_auth
+
+    - name: Configure {{ dual_nic_vm_name }} dual NICs on {{ dual_nic_bridge }}
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/nodes/{{ proxmox_node }}/qemu/{{ dual_nic_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          net0: "virtio,bridge={{ dual_nic_bridge }}"
+          net1: "virtio,bridge={{ dual_nic_bridge }}"
+        headers:
+          Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
+          CSRFPreventionToken: "{{ _pve_auth.json.data.CSRFPreventionToken }}"
+        validate_certs: false
+
+    - name: Configure {{ dual_nic_vm_name }} cloud-init
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_root_password }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dual_nic_vmid }}"
+        ciuser: "{{ guest_default_user }}"
+        cipassword: "{{ guest_default_password }}"
+        sshkeys: "{{ guest_ssh_public_key }}"
+        ipconfig:
+          ipconfig0: "ip={{ dual_nic_ip0 }},gw={{ dual_nic_gw }}"
+          ipconfig1: "ip={{ dual_nic_ip1 }}"
+        nameservers:
+          - "{{ libvirt_net_gateway }}"
+        update: true
+      when: guest_ssh_public_key | default('', true) | length > 0
+
+    - name: Configure {{ dual_nic_vm_name }} cloud-init (no SSH key)
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_root_password }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dual_nic_vmid }}"
+        ciuser: "{{ guest_default_user }}"
+        cipassword: "{{ guest_default_password }}"
+        ipconfig:
+          ipconfig0: "ip={{ dual_nic_ip0 }},gw={{ dual_nic_gw }}"
+          ipconfig1: "ip={{ dual_nic_ip1 }}"
+        nameservers:
+          - "{{ libvirt_net_gateway }}"
+        update: true
+      when: guest_ssh_public_key | default('', true) | length == 0
+
+    - name: Resize {{ dual_nic_vm_name }} disk
+      community.proxmox.proxmox_disk:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_root_password }}"
+        vmid: "{{ dual_nic_vmid }}"
+        disk: scsi0
+        size: "{{ dual_nic_disk_size }}"
+        state: resized
+
+    - name: Start {{ dual_nic_vm_name }}
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_root_password }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dual_nic_vmid }}"
+        state: started
+
+    - name: Wait for {{ dual_nic_vm_name }} SSH on net0
+      ansible.builtin.wait_for:
+        host: "{{ dual_nic_ip0 | regex_replace('/.*', '') }}"
+        port: 22
+        timeout: 300
+
+    - name: Test SSH on net0 ({{ dual_nic_ip0 }})
+      ansible.builtin.wait_for:
+        host: "{{ dual_nic_ip0 | regex_replace('/.*', '') }}"
+        port: 22
+        timeout: 30
+        state: started
+      register: _ssh_net0
+
+    - name: Test SSH on net1 ({{ dual_nic_ip1 }})
+      ansible.builtin.wait_for:
+        host: "{{ dual_nic_ip1 | regex_replace('/.*', '') }}"
+        port: 22
+        timeout: 30
+        state: started
+      register: _ssh_net1
+
+    - name: SSH verification passed
+      ansible.builtin.debug:
+        msg: "SSH reachable on both net0 ({{ dual_nic_ip0 }}) and net1 ({{ dual_nic_ip1 }})"
+
+    - name: Stop {{ dual_nic_vm_name }}
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_root_password }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dual_nic_vmid }}"
+        state: stopped
+        force: true
+        timeout: 120
+
+    - name: Remove cloned OS disk and cloud-init config
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/nodes/{{ proxmox_node }}/qemu/{{ dual_nic_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          delete: "scsi0,ciuser,cipassword,sshkeys,ipconfig0,ipconfig1,nameserver"
+          ide2: "none,media=cdrom"
+        headers:
+          Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
+          CSRFPreventionToken: "{{ _pve_auth.json.data.CSRFPreventionToken }}"
+        validate_certs: false
+
+    - name: Remove unused disk
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/nodes/{{ proxmox_node }}/qemu/{{ dual_nic_vmid }}/unlink"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          idlist: "unused0"
+          force: 1
+        headers:
+          Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
+          CSRFPreventionToken: "{{ _pve_auth.json.data.CSRFPreventionToken }}"
+        validate_certs: false
+      ignore_errors: true
+
+    - name: Add empty 500G disk
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/nodes/{{ proxmox_node }}/qemu/{{ dual_nic_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          scsi0: "local-lvm:500,format=raw"
+        headers:
+          Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
+          CSRFPreventionToken: "{{ _pve_auth.json.data.CSRFPreventionToken }}"
+        validate_certs: false
+
+    - name: Set boot order to disk first then CD-ROM
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/nodes/{{ proxmox_node }}/qemu/{{ dual_nic_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          boot: "order=scsi0;ide2"
+        headers:
+          Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
+          CSRFPreventionToken: "{{ _pve_auth.json.data.CSRFPreventionToken }}"
+        validate_certs: false
+
+    - name: "{{ dual_nic_vm_name }} final state"
+      ansible.builtin.debug:
+        msg: >-
+          {{ dual_nic_vm_name }} (VMID {{ dual_nic_vmid }}) — stopped,
+          empty 500G disk on scsi0, boot order: disk then CD-ROM (ide2),
+          net0: {{ dual_nic_ip0 }} ({{ dual_nic_bridge }}),
+          net1: {{ dual_nic_ip1 }} ({{ dual_nic_bridge }})
