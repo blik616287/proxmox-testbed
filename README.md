@@ -43,6 +43,9 @@ ansible-playbook playbooks/02-proxmox-vm.yml
 ansible-playbook playbooks/03-proxmox-configure.yml
 ansible-playbook playbooks/04-provision-vms.yml
 
+# Create a dual-NIC VM (empty 500G disk, boot: disk → CD-ROM)
+ansible-playbook playbooks/05-dual-nic-vm.yml
+
 # Tear everything down
 ansible-playbook playbooks/teardown.yml
 ```
@@ -56,7 +59,8 @@ ansible-playbook playbooks/teardown.yml
 | `02-proxmox-vm.yml` | Download PVE ISO, remaster with auto-installer, create VM |
 | `03-proxmox-configure.yml` | Disable enterprise repo, create API token, build cloud-init template |
 | `04-provision-vms.yml` | Clone and start guest VMs via Proxmox API |
-| `site.yml` | Runs all of the above in order |
+| `05-dual-nic-vm.yml` | Create a dual-NIC VM: verify SSH, swap disk, set boot order |
+| `site.yml` | Runs 00–04 in order |
 | `teardown.yml` | Destroys everything: guests, Proxmox VM, network |
 
 ## Roles
