@@ -189,13 +189,28 @@
         validate_certs: false
       ignore_errors: true
 
-    - name: Add empty 500G disk
+    - name: Add empty 500G disk and cloud-init CIDATA drive
       ansible.builtin.uri:
         url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/nodes/{{ proxmox_node }}/qemu/{{ dual_nic_vmid }}/config"
         method: PUT
         body_format: form-urlencoded
         body:
           scsi0: "local-lvm:500,format=raw"
+          ide3: "local-lvm:cloudinit"
+        headers:
+          Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
+          CSRFPreventionToken: "{{ _pve_auth.json.data.CSRFPreventionToken }}"
+        validate_certs: false
+
+    - name: Set cloud-init network config
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/nodes/{{ proxmox_node }}/qemu/{{ dual_nic_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          ipconfig0: "ip={{ dual_nic_ip0 }},gw={{ dual_nic_gw }}"
+          ipconfig1: "ip={{ dual_nic_ip1 }}"
+          nameserver: "{{ libvirt_net_gateway }}"
         headers:
           Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
           CSRFPreventionToken: "{{ _pve_auth.json.data.CSRFPreventionToken }}"
@@ -217,6 +232,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ dual_nic_vm_name }} (VMID {{ dual_nic_vmid }}) — stopped,
-          empty 500G disk on scsi0, boot order: disk then CD-ROM (ide2),
+          500G disk (scsi0), CIDATA drive (ide3), CD-ROM (ide2),
+          boot order: disk then CD-ROM,
           net0: {{ dual_nic_ip0 }} ({{ dual_nic_bridge }}),
           net1: {{ dual_nic_ip1 }} ({{ dual_nic_bridge }})
