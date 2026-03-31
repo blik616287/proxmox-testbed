@@ -15,7 +15,7 @@
     dual_nic_vm_name: dual-nic-vm
     dual_nic_vmid: 200
     dual_nic_cores: 2
-    dual_nic_memory: 2048
+    dual_nic_memory: 32768
     dual_nic_disk_size: "20G"
     dual_nic_bridge: vmbr0
     dual_nic_ip0: "10.100.0.200/24"
@@ -195,7 +195,8 @@
         method: PUT
         body_format: form-urlencoded
         body:
-          scsi0: "local-lvm:500,format=raw"
+          scsihw: "virtio-scsi-single"
+          scsi0: "local-lvm:500,format=raw,iothread=1"
           ide3: "local-lvm:cloudinit"
         headers:
           Cookie: "PVEAuthCookie={{ _pve_auth.json.data.ticket }}"
