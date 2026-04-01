@@ -26,7 +26,7 @@ libvirt_net_dhcp_end: "10.100.0.199"
 proxmox_vm_name: proxmox-ve
 proxmox_vm_ip: "10.100.0.2"
 proxmox_vm_mac: "52:54:00:aa:bb:01"
-proxmox_vm_ram_mb: 16384
+proxmox_vm_ram_mb: 49152
 proxmox_vm_vcpus: 8
 proxmox_vm_disk_size: "120G"
 proxmox_vm_disk_path: "{{ vm_disk_dir }}/proxmox-ve.qcow2"
