@@ -16,3 +16,26 @@
 - import_playbook: 02-proxmox-vm.yml
 - import_playbook: 03-proxmox-configure.yml
 - import_playbook: 04-provision-vms.yml
+
+- name: Testbed deployment summary
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Deployment complete
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  Proxmox VE Testbed — Deployment Complete"
+          - "============================================"
+          - ""
+          - "Web UI:      https://{{ proxmox_vm_ip }}:{{ proxmox_api_port }}"
+          - "Node:        {{ proxmox_node }}"
+          - "Root user:   {{ proxmox_api_user }} / {{ proxmox_root_password }}"
+          - ""
+          - "API Token ID:     {{ hostvars['proxmox-ve']['api_token_full_id'] }}"
+          - "API Token Secret: {{ hostvars['proxmox-ve']['api_token_secret'] }}"
+          - "API Permissions:  Full (privsep=0)"
+          - ""
+          - "Guest VMs:"
+          - "{% for vm in guest_vms %}  - {{ vm.name }} (VMID {{ vm.vmid }}): {{ vm.ip | regex_replace('/.*', '') }}\n{% endfor %}"
+          - "============================================"
