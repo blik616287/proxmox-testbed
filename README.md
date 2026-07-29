@@ -104,3 +104,7 @@ All hosts share `10.100.0.0/24` via a libvirt NAT network:
 - `10.100.0.101+` — guest VMs
 
 Proxmox web UI: `https://10.100.0.2:8006`
+
+## License
+
+[MIT](LICENSE) © 2026 Martin Forde <mforde84@gmail.com>, [Blik Labs](https://bliklabs.com).
